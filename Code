@@ -64,13 +64,6 @@ void loop() {
   }
   FastLED.show();
 
-  // Управление шторами
-  if (temp.temperature > TEMP_THRESHOLD) {
-    curtainServo.write(90); // Открыть шторы
-  } else {
-    curtainServo.write(0);  // Закрыть шторы
-  }
-
   // Передача данных через LoRa
   String data = String(temp.temperature) + "," + String(humidity.relative_humidity) + "," + String(lux);
   LoRa.beginPacket();
