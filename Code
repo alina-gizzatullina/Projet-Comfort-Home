@@ -2,7 +2,6 @@
 #include <Adafruit_SHTC3.h>
 #include <Adafruit_LTR390.h>
 #include <FastLED.h>
-#include <Servo.h>
 #include <LoRa.h>
 
 // Настройки светодиодной ленты
@@ -10,9 +9,8 @@
 #define NUM_LEDS 30
 CRGB leds[NUM_LEDS];
 
-// Настройки сервомотора
-Servo curtainServo;
-int servoPos = 0;
+// Реле для осушителя
+const int dehumidifierPin = 13;
 
 // Датчики
 Adafruit_SHTC3 shtc3 = Adafruit_SHTC3();
@@ -23,8 +21,9 @@ const int pirPin = 4;
 bool isOccupied = false;
 
 // Пороговые значения
-const float TEMP_THRESHOLD = 25.0; // °C
-const float LUX_THRESHOLD = 100;   // Люкс
+const float TEMP_THRESHOLD = 25.0;    // °C
+const float HUMIDITY_THRESHOLD = 60.0; // %
+const float LUX_THRESHOLD = 100;      // Люкс
 
 void setup() {
   Serial.begin(115200);
@@ -39,8 +38,9 @@ void setup() {
   FastLED.addLeds<WS2812, LED_PIN, GRB>(leds, NUM_LEDS);
   FastLED.setBrightness(50);
 
-  // Сервомотор
-  curtainServo.attach(13);
+  // Реле
+  pinMode(dehumidifierPin, OUTPUT);
+  digitalWrite(dehumidifierPin, LOW);
 
   // LoRa
   LoRa.setPins(15, 2, 16); // CS, RST, IRQ
@@ -63,6 +63,13 @@ void loop() {
     fill_solid(leds, NUM_LEDS, CRGB::Black);
   }
   FastLED.show();
+
+  // Управление осушителем
+  if (humidity.relative_humidity > HUMIDITY_THRESHOLD) {
+    digitalWrite(dehumidifierPin, HIGH); // Включить осушитель
+  } else {
+    digitalWrite(dehumidifierPin, LOW);  // Выключить осушитель
+  }
 
   // Передача данных через LoRa
   String data = String(temp.temperature) + "," + String(humidity.relative_humidity) + "," + String(lux);
