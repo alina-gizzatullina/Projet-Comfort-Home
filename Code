@@ -1,46 +1,81 @@
 #include <Wire.h>
-#include "Adafruit_SHT31.h"
+#include <Adafruit_SHTC3.h>
+#include <Adafruit_LTR390.h>
+#include <FastLED.h>
+#include <Servo.h>
+#include <LoRa.h>
 
-Adafruit_SHT31 sht31 = Adafruit_SHT31();
+// Настройки светодиодной ленты
+#define LED_PIN 5
+#define NUM_LEDS 30
+CRGB leds[NUM_LEDS];
 
-#define RELAY_HUMIDIFIER  5  // Реле для увлажнителя
-#define RELAY_HEATER      18 // Реле для обогревателя
+// Настройки сервомотора
+Servo curtainServo;
+int servoPos = 0;
+
+// Датчики
+Adafruit_SHTC3 shtc3 = Adafruit_SHTC3();
+Adafruit_LTR390 ltr = Adafruit_LTR390();
+
+// PIR
+const int pirPin = 4;
+bool isOccupied = false;
+
+// Пороговые значения
+const float TEMP_THRESHOLD = 25.0; // °C
+const float LUX_THRESHOLD = 100;   // Люкс
 
 void setup() {
-    Serial.begin(115200);
-    Wire.begin();
-    
-    pinMode(RELAY_HUMIDIFIER, OUTPUT);
-    pinMode(RELAY_HEATER, OUTPUT);
-    
-    if (!sht31.begin(0x44)) {
-        Serial.println("Ошибка подключения SHT31!");
-        while (1) delay(10);
-    }
+  Serial.begin(115200);
+  Wire.begin();
+
+  // Инициализация датчиков
+  if (!shtc3.begin()) Serial.println("SHTC3 не найден!");
+  if (!ltr.begin()) Serial.println("LTR390 не найден!");
+  ltr.setMode(LTR390_MODE_ALS);
+
+  // Светодиодная лента
+  FastLED.addLeds<WS2812, LED_PIN, GRB>(leds, NUM_LEDS);
+  FastLED.setBrightness(50);
+
+  // Сервомотор
+  curtainServo.attach(13);
+
+  // LoRa
+  LoRa.setPins(15, 2, 16); // CS, RST, IRQ
+  if (!LoRa.begin(868E6)) Serial.println("LoRa не инициализирован!");
 }
 
 void loop() {
-    float temp = sht31.readTemperature();
-    float hum = sht31.readHumidity();
+  // Чтение данных с датчиков
+  sensors_event_t humidity, temp;
+  shtc3.getEvent(&humidity, &temp);
+  float lux = ltr.getLUX();
 
-    Serial.print("Температура: "); Serial.print(temp); Serial.println(" °C");
-    Serial.print("Влажность: "); Serial.print(hum); Serial.println(" %");
+  // Проверка присутствия
+  isOccupied = digitalRead(pirPin);
 
-    // Контроль влажности
-    if (hum < 40.0) {
-        digitalWrite(RELAY_HUMIDIFIER, HIGH); // Включаем увлажнитель
-        Serial.println("Увлажнитель ВКЛ.");
-    } else {
-        digitalWrite(RELAY_HUMIDIFIER, LOW);
-    }
+  // Управление освещением
+  if (isOccupied && lux < LUX_THRESHOLD) {
+    fill_solid(leds, NUM_LEDS, CRGB(255, 255, 200)); // Белый свет
+  } else {
+    fill_solid(leds, NUM_LEDS, CRGB::Black);
+  }
+  FastLED.show();
 
-    // Контроль температуры
-    if (temp < 20.0) {
-        digitalWrite(RELAY_HEATER, HIGH); // Включаем обогреватель
-        Serial.println("Обогреватель ВКЛ.");
-    } else {
-        digitalWrite(RELAY_HEATER, LOW);
-    }
+  // Управление шторами
+  if (temp.temperature > TEMP_THRESHOLD) {
+    curtainServo.write(90); // Открыть шторы
+  } else {
+    curtainServo.write(0);  // Закрыть шторы
+  }
 
-    delay(5000); // Пауза между измерениями
+  // Передача данных через LoRa
+  String data = String(temp.temperature) + "," + String(humidity.relative_humidity) + "," + String(lux);
+  LoRa.beginPacket();
+  LoRa.print(data);
+  LoRa.endPacket();
+
+  delay(5000); // Обновление каждые 5 секунд
 }
