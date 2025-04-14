@@ -1,5 +1,5 @@
 #include <Wire.h>
-#include <Adafruit_SHTC3.h>
-#include <Adafruit_LTR390.h>
+#include <SHTC3.h>
+#include <LTR390.h>
 #include <FastLED.h>
-#include 
+#include <LoRa.h>
