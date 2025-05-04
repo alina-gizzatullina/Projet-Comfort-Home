@@ -1,5 +1,115 @@
 #include <Wire.h>
-#include <SHTC3.h>
-#include <LTR390.h>
-#include <FastLED.h>
-#include <LoRa.h>
+#include <Adafruit_SHTC3.h>
+#include <Adafruit_LTR390.h>
+#include <RH_RF95.h>
+#include <Adafruit_SSD1306.h>
+
+// Настройки OLED
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+Adafruit_SSD1306 oled(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire);
+
+// Датчики
+Adafruit_SHTC3 shtc3;
+Adafruit_LTR390 ltr;
+
+// LoRa
+RH_RF95 rf95(10, 3); // CS=10, INT=3
+
+// Пороговые значения
+#define MIN_HUMIDITY 40    // Минимальная влажность (%)
+#define MAX_HUMIDITY 70    // Максимальная влажность (%)
+#define MIN_TEMP 18        // Минимальная температура (°C)
+#define MAX_TEMP 26        // Максимальная температура (°C)
+#define LUX_THRESHOLD 50   // Порог освещенности (люкс)
+
+void setup() {
+  Serial.begin(9600);
+  Wire.begin();
+
+  // Инициализация OLED
+  if (!oled.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    Serial.println("Ошибка OLED!");
+    while (1);
+  }
+  oled.display();
+  delay(1000);
+
+  // Инициализация датчиков
+  if (!shtc3.begin()) Serial.println("Ошибка SHTC3!");
+  if (!ltr.begin()) Serial.println("Ошибка LTR390!");
+  ltr.setMode(LTR390_MODE_ALS);
+
+  // LoRa
+  if (!rf95.init()) Serial.println("Ошибка LoRa!");
+  rf95.setFrequency(868.0); // Для EU
+}
+
+void loop() {
+  sensors_event_t humidity, temp;
+  shtc3.getEvent(&humidity, &temp);
+  float currentTemp = temp.temperature;
+  float currentHumidity = humidity.relative_humidity;
+  float lux = ltr.readALS();
+
+  // Отображение данных на OLED
+  displayData(currentTemp, currentHumidity, lux);
+
+  // Проверка условий и отправка уведомлений
+  checkAndSendAlerts(currentTemp, currentHumidity, lux);
+
+  delay(3000); // Интервал между измерениями
+}
+
+// Отображение данных на экране
+void displayData(float temp, float humidity, float lux) {
+  oled.clearDisplay();
+  oled.setTextSize(1);
+  oled.setTextColor(SSD1306_WHITE);
+  oled.setCursor(0, 0);
+
+  oled.print("Температура: ");
+  oled.print(temp, 1);
+  oled.println(" C");
+
+  oled.print("Влажность: ");
+  oled.print(humidity, 1);
+  oled.println(" %");
+
+  oled.print("Освещенность: ");
+  oled.print(lux, 0);
+  oled.println(" lux");
+
+  oled.display();
+}
+
+// Проверка условий и отправка уведомлений
+void checkAndSendAlerts(float temp, float humidity, float lux) {
+  // Проверка влажности
+  if (humidity < MIN_HUMIDITY) {
+    sendLoRaAlert("Включите увлажнитель!");
+  } else if (humidity > MAX_HUMIDITY) {
+    sendLoRaAlert("Включите осушитель!");
+  }
+
+  // Проверка температуры
+  if (temp < MIN_TEMP) {
+    sendLoRaAlert("Включите обогреватель!");
+  } else if (temp > MAX_TEMP) {
+    sendLoRaAlert("Включите кондиционер!");
+  }
+
+  // Проверка освещенности
+  if (lux < LUX_THRESHOLD) {
+    sendLoRaAlert("Включите люстру!");
+  }
+}
+
+// Отправка сообщения через LoRa
+void sendLoRaAlert(String message) {
+  char alert[50];
+  message.toCharArray(alert, 50);
+  rf95.send((uint8_t*)alert, strlen(alert));
+  rf95.waitPacketSent();
+  Serial.println("Отправлено: " + message);
+}
