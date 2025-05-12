@@ -1,68 +1,81 @@
 #include <Wire.h>
 #include <Adafruit_SHTC3.h>
-#include <Adafruit_LTR390.h>
+#include <Adafruit_LTR329_LTR303.h>
 #include <RH_RF95.h>
 #include "lcdgfx.h"
 
-// --- OLED через lcdgfx ---
+// OLED через lcdgfx
 DisplaySSD1306_128x64_I2C display(-1);
 
-// --- Датчики ---
+// Датчики
 Adafruit_SHTC3 shtc3;
-Adafruit_LTR390 ltr;
+Adafruit_LTR303 ltr;  // класс для LTR-303 из Adafruit_LTR329_LTR303
 
-// --- LoRa ---
+// LoRa
 RH_RF95 rf95(10, 3);  // CS=10, INT=3
 
-// --- Пороги ---
-#define MIN_HUMIDITY 40
-#define MAX_HUMIDITY 70
-#define MIN_TEMP 18
-#define MAX_TEMP 26
-#define LUX_THRESHOLD 50
+// Пороговые значения
+#define MIN_HUMIDITY  40    // %
+#define MAX_HUMIDITY  70    // %
+#define MIN_TEMP      18    // °C
+#define MAX_TEMP      26    // °C
+#define LUX_THRESHOLD 50    // lx
 
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(115200);
   Wire.begin();
 
-  // Инициализация OLED
+  // OLED
   display.begin();
   display.setFixedFont(ssd1306xled_font6x8);
   display.clear();
   display.printFixed(0, 0, "OLED ready", STYLE_NORMAL);
 
-  // Инициализация датчиков
+  // SHTC3 (I2C 0x70)
   if (!shtc3.begin()) {
-    Serial.println("Ошибка SHTC3");
+    Serial.println("Err: SHTC3");
     display.printFixed(0, 10, "Err: SHTC3", STYLE_BOLD);
+    while (1);
   }
 
+  // LTR303 (Adafruit_LTR329_LTR303, default address 0x29 для LTR-303) :contentReference[oaicite:0]{index=0}
   if (!ltr.begin()) {
-    Serial.println("Ошибка LTR390");
-    display.printFixed(0, 20, "Err: LTR390", STYLE_BOLD);
-  } else {
-    ltr.setMode(LTR390_MODE_ALS);
+    Serial.println("Err: LTR303");
+    display.printFixed(0, 20, "Err: LTR303", STYLE_BOLD);
+    while (1);
   }
+  // Настройки усиления и времени интеграции :contentReference[oaicite:1]{index=1}
+  ltr.setGain(LTR3XX_GAIN_2);
+  ltr.setIntegrationTime(LTR3XX_INTEGTIME_100);
+  ltr.setMeasurementRate(LTR3XX_MEASRATE_200);
 
-  // Инициализация LoRa
+  // LoRa
   if (!rf95.init()) {
-    Serial.println("Ошибка LoRa");
+    Serial.println("Err: LoRa");
     display.printFixed(0, 30, "Err: LoRa", STYLE_BOLD);
-  } else {
-    rf95.setFrequency(868.0);
-    display.printFixed(0, 40, "LoRa OK", STYLE_NORMAL);
+    while (1);
   }
+  rf95.setFrequency(868.0);
 
-  delay(2000);
+  delay(1000);
   display.clear();
 }
 
 void loop() {
-  sensors_event_t humidity, temp;
-  shtc3.getEvent(&humidity, &temp);
-  float currentTemp = temp.temperature;
-  float currentHumidity = humidity.relative_humidity;
-  float lux = ltr.readALS();
+  // SHTC3
+  sensors_event_t humEvent, tempEvent;
+  shtc3.getEvent(&humEvent, &tempEvent);
+  float currentTemp     = tempEvent.temperature;
+  float currentHumidity = humEvent.relative_humidity;
+
+  // LTR303
+  float lux = NAN;
+  if (ltr.newDataAvailable()) {
+    uint16_t vis_ir, ir;
+    if (ltr.readBothChannels(vis_ir, ir)) {
+      lux = float(vis_ir - ir);  // видимая освещённость ≈ разница каналов
+    }
+  }
 
   displayData(currentTemp, currentHumidity, lux);
   checkAndSendAlerts(currentTemp, currentHumidity, lux);
@@ -72,38 +85,46 @@ void loop() {
 
 void displayData(float temp, float humidity, float lux) {
   display.clear();
-  char buffer[32];
+  char buf[32];
 
-  snprintf(buffer, sizeof(buffer), "Temp: %.1f C", temp);
-  display.printFixed(0, 0, buffer, STYLE_NORMAL);
+  // Температура
+  if (!isnan(temp))
+    snprintf(buf, sizeof(buf), "Temp: %.1f C", temp);
+  else
+    snprintf(buf, sizeof(buf), "Temp: ??? C");
+  display.printFixed(0,  0, buf, STYLE_NORMAL);
 
-  snprintf(buffer, sizeof(buffer), "Hum : %.1f %%", humidity);
-  display.printFixed(0, 10, buffer, STYLE_NORMAL);
+  // Влажность
+  if (!isnan(humidity))
+    snprintf(buf, sizeof(buf), "Hum : %.1f %%", humidity);
+  else
+    snprintf(buf, sizeof(buf), "Hum : ??? %%");
+  display.printFixed(0, 10, buf, STYLE_NORMAL);
 
-  snprintf(buffer, sizeof(buffer), "Lux : %.0f lx", lux);
-  display.printFixed(0, 20, buffer, STYLE_NORMAL);
+  // Освещённость
+  if (!isnan(lux))
+    snprintf(buf, sizeof(buf), "Lux : %.0f lx", lux);
+  else
+    snprintf(buf, sizeof(buf), "Lux : ??? lx");
+  display.printFixed(0, 20, buf, STYLE_NORMAL);
 }
 
 void checkAndSendAlerts(float temp, float humidity, float lux) {
-  if (humidity < MIN_HUMIDITY) {
-    sendLoRaAlert("Включите увлажнитель!");
-  } else if (humidity > MAX_HUMIDITY) {
-    sendLoRaAlert("Включите осушитель!");
+  if (!isnan(humidity)) {
+    if      (humidity < MIN_HUMIDITY) sendLoRaAlert("Увлажнитель");
+    else if (humidity > MAX_HUMIDITY) sendLoRaAlert("Осушитель");
   }
-
-  if (temp < MIN_TEMP) {
-    sendLoRaAlert("Включите обогреватель!");
-  } else if (temp > MAX_TEMP) {
-    sendLoRaAlert("Включите кондиционер!");
+  if (!isnan(temp)) {
+    if      (temp < MIN_TEMP) sendLoRaAlert("Обогреватель");
+    else if (temp > MAX_TEMP) sendLoRaAlert("Кондиционер");
   }
-
-  if (lux < LUX_THRESHOLD) {
-    sendLoRaAlert("Включите люстру!");
+  if (!isnan(lux) && lux < LUX_THRESHOLD) {
+    sendLoRaAlert("Люстра");
   }
 }
 
-void sendLoRaAlert(const char* message) {
-  rf95.send((uint8_t*)message, strlen(message));
+void sendLoRaAlert(const char* msg) {
+  rf95.send((uint8_t*)msg, strlen(msg));
   rf95.waitPacketSent();
-  Serial.println("Отправлено: " + String(message));
+  Serial.println("Sent: " + String(msg));
 }
