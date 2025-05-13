@@ -3,8 +3,9 @@
 #include <Adafruit_LTR329_LTR303.h>
 #include <RH_RF95.h>
 #include "lcdgfx.h"
+#include <FastLED.h>
 
-// OLED
+// OLED дисплей
 DisplaySSD1306_128x64_I2C display(-1);
 
 // Датчики
@@ -14,7 +15,19 @@ Adafruit_LTR303 ltr;
 // LoRa
 RH_RF95 rf95(10, 3);  // CS=10, INT=3
 
-// Пороговые значения
+// Светодиоды
+#define LED_PIN     4
+#define NUM_LEDS    21
+#define BRIGHTNESS  32
+#define LED_TYPE    WS2812
+#define COLOR_ORDER GRB
+CRGB leds[NUM_LEDS];
+
+// PIR sensor
+#define PIR_POWER_PIN A2
+#define PIR_SIGNAL_PIN A3
+
+// Пороги
 #define MIN_HUMIDITY  40
 #define MAX_HUMIDITY  70
 #define MIN_TEMP      18
@@ -38,7 +51,7 @@ void setup() {
     while (1);
   }
 
-  // LTR303
+  // LTR-303
   if (!ltr.begin()) {
     Serial.println("Err: LTR303");
     display.printFixed(0, 20, "Err: LTR303", STYLE_BOLD);
@@ -56,16 +69,27 @@ void setup() {
   }
   rf95.setFrequency(868.0);
 
+  // PIR
+  pinMode(PIR_POWER_PIN, OUTPUT);
+  digitalWrite(PIR_POWER_PIN, HIGH);
+  pinMode(PIR_SIGNAL_PIN, INPUT);
+
+  // LED
+  FastLED.addLeds<LED_TYPE, LED_PIN, COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
+  FastLED.setBrightness(BRIGHTNESS);
+
   delay(1000);
   display.clear();
 }
 
 void loop() {
+  // Данные с SHTC3
   sensors_event_t humEvent, tempEvent;
   shtc3.getEvent(&humEvent, &tempEvent);
   float temp = tempEvent.temperature;
   float hum = humEvent.relative_humidity;
 
+  // Данные с LTR-303
   float lux = NAN;
   if (ltr.newDataAvailable()) {
     uint16_t vis_ir, ir;
@@ -74,7 +98,13 @@ void loop() {
     }
   }
 
+  // Обработка PIR и LED
+  handleMotionAndLight(lux);
+
+  // Вывод на дисплей
   displayData(temp, hum, lux);
+
+  // Отправка тревог
   checkAndSendAlerts(temp, hum, lux);
 
   delay(3000);
@@ -84,13 +114,13 @@ void displayData(float temp, float hum, float lux) {
   display.clear();
   char buf[32];
 
-  snprintf(buf, sizeof(buf), "Temp: %s", isnan(temp) ? "???" : String(temp, 1).c_str());
+  snprintf(buf, sizeof(buf), "Temp: %.1f C", isnan(temp) ? 0.0 : temp);
   display.printFixed(0, 0, buf, STYLE_NORMAL);
 
-  snprintf(buf, sizeof(buf), "Hum : %s", isnan(hum) ? "???" : String(hum, 1).c_str());
+  snprintf(buf, sizeof(buf), "Hum : %.1f %%", isnan(hum) ? 0.0 : hum);
   display.printFixed(0, 10, buf, STYLE_NORMAL);
 
-  snprintf(buf, sizeof(buf), "Lux : %s", isnan(lux) ? "???" : String(lux, 0).c_str());
+  snprintf(buf, sizeof(buf), "Lux : %.0f lx", isnan(lux) ? 0.0 : lux);
   display.printFixed(0, 20, buf, STYLE_NORMAL);
 }
 
@@ -112,4 +142,16 @@ void sendLoRaAlert(const char* msg) {
   rf95.send((uint8_t*)msg, strlen(msg));
   rf95.waitPacketSent();
   Serial.println("Sent: " + String(msg));
+}
+
+void handleMotionAndLight(float lux) {
+  bool motionDetected = digitalRead(PIR_SIGNAL_PIN);
+  bool lowLight = (!isnan(lux) && lux < LUX_THRESHOLD);
+
+  if (motionDetected && lowLight) {
+    fill_solid(leds, NUM_LEDS, CRGB::Red);  // Движение + темно — красный
+  } else {
+    fill_solid(leds, NUM_LEDS, CRGB::Green);  // Нормально — зелёный
+  }
+  FastLED.show();
 }
