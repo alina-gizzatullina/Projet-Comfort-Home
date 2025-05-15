@@ -114,13 +114,13 @@ void displayData(float temp, float hum, float lux) {
   display.clear();
   char buf[32];
 
-  snprintf(buf, sizeof(buf), "Temp: %.1f C", isnan(temp) ? 0.0 : temp);
+  snprintf(buf, sizeof(buf), "Temp: %s", isnan(temp) ? "???" : String(temp, 1).c_str());
   display.printFixed(0, 0, buf, STYLE_NORMAL);
 
-  snprintf(buf, sizeof(buf), "Hum : %.1f %%", isnan(hum) ? 0.0 : hum);
+  snprintf(buf, sizeof(buf), "Hum : %s", isnan(hum) ? "???" : String(hum, 1).c_str());
   display.printFixed(0, 10, buf, STYLE_NORMAL);
 
-  snprintf(buf, sizeof(buf), "Lux : %.0f lx", isnan(lux) ? 0.0 : lux);
+  snprintf(buf, sizeof(buf), "Lux : %s", isnan(lux) ? "???" : String(lux, 0).c_str());
   display.printFixed(0, 20, buf, STYLE_NORMAL);
 }
 
