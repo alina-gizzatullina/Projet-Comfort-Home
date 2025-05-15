@@ -7,5 +7,5 @@ Ce projet est réalisé dans le cadre du module Communication Sans Fil en Licenc
 
  Contrôleur d’Ambiance Domotique      
  Capteurs : LTR-303A (lumière), PIR (présence), SHTC3 (température).      
- Actionneurs : Ruban LED (éclairage adaptatif)  
+ Actionneurs : LED (éclairage adaptatif)  
  Communication : Réglage à distance via LoRa.
