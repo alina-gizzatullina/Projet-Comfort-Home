@@ -15,20 +15,20 @@ Adafruit_LTR303 ltr;
 #define COLOR_ORDER GRB
 CRGB leds[NUM_LEDS];
 
-// Пороги
+// Seuils
 #define MIN_HUMIDITY  40
 #define MAX_HUMIDITY  70
 #define MIN_TEMP      18
 #define MAX_TEMP      26
 #define LUX_THRESHOLD 50
 
-// PIR sensor
+// Capteur PIR
 #define PIR_POWER_PIN A2
 #define PIR_SIGNAL_PIN A3
 
 bool lastLightState = false;
 unsigned long motionStartTime = 0;
-const unsigned long LIGHT_DURATION = 30000; // 30 секунд
+const unsigned long LIGHT_DURATION = 30000; // 30 secondes
 
 void setup() {
   Serial.begin(115200);
@@ -39,19 +39,19 @@ void setup() {
   display.clear();
   
   if (!shtc3.begin()) {
-    Serial.println("Error: SHTC3 sensor!");
+    Serial.println("Erreur : capteur SHTC3 !");
     while(1);
   }
 
   if (!ltr.begin()) {
-    Serial.println("Error: LTR303 sensor!");
+    Serial.println("Erreur : capteur LTR303 !");
     while(1);
   }
   ltr.setGain(LTR3XX_GAIN_2);
   ltr.setIntegrationTime(LTR3XX_INTEGTIME_100);
   ltr.setMeasurementRate(LTR3XX_MEASRATE_200);
 
-  // Настройка PIR
+  // Configuration PIR
   pinMode(PIR_POWER_PIN, OUTPUT);
   digitalWrite(PIR_POWER_PIN, HIGH);
   pinMode(PIR_SIGNAL_PIN, INPUT);
@@ -89,22 +89,22 @@ void handleLighting(float lux) {
   bool lowLight = (!isnan(lux) && lux < LUX_THRESHOLD);
   bool shouldLightOn = motionDetected && lowLight;
 
-  // Обновляем таймер при обнаружении движения
+  // Mise à jour du timer lors de la détection
   if (motionDetected) motionStartTime = millis();
 
-  // Проверяем не истекло ли время освещения
+  // Vérification expiration durée éclairage
   bool timeExpired = (millis() - motionStartTime) > LIGHT_DURATION;
 
   if (shouldLightOn && !timeExpired) {
     if (!lastLightState) {
-      Serial.println("[СВЕТ] Освещение включено");
+      Serial.println("[LUMIÈRE] Éclairage activé");
       fill_solid(leds, NUM_LEDS, CRGB::White);
       FastLED.show();
       lastLightState = true;
     }
   } else {
     if (lastLightState) {
-      Serial.println("[СВЕТ] Освещение выключено");
+      Serial.println("[LUMIÈRE] Éclairage désactivé");
       FastLED.clear();
       FastLED.show();
       lastLightState = false;
@@ -116,31 +116,31 @@ void displayData(float temp, float hum, float lux) {
   display.clear();
   char buf[32];
 
-  snprintf(buf, sizeof(buf), "Temp: %s", isnan(temp) ? "???" : String(temp, 1).c_str());
+  snprintf(buf, sizeof(buf), "Temp : %s", isnan(temp) ? "???" : String(temp, 1).c_str());
   display.printFixed(0, 0, buf, STYLE_NORMAL);
 
-  snprintf(buf, sizeof(buf), "Hum : %s", isnan(hum) ? "???" : String(hum, 1).c_str());
+  snprintf(buf, sizeof(buf), "Humid : %s", isnan(hum) ? "???" : String(hum, 1).c_str());
   display.printFixed(0, 10, buf, STYLE_NORMAL);
 
   snprintf(buf, sizeof(buf), "Lux : %s", isnan(lux) ? "???" : String(lux, 0).c_str());
   display.printFixed(0, 20, buf, STYLE_NORMAL);
 
-  // Отображение статуса освещения
+  // Affichage statut lumière
   display.printFixed(0, 30, lastLightState ? "Light: ON " : "Light: OFF", STYLE_BOLD);
 }
 
 void checkAndSendAlerts(float temp, float hum, float lux) {
   if (!isnan(hum)) {
-    if (hum < MIN_HUMIDITY) sendAlert("Увлажнитель");
-    else if (hum > MAX_HUMIDITY) sendAlert("Осушитель");
+    if (hum < MIN_HUMIDITY) sendAlert("l'humidificateur");
+    else if (hum > MAX_HUMIDITY) sendAlert("le déshumidificateur");
   }
   if (!isnan(temp)) {
-    if (temp < MIN_TEMP) sendAlert("Обогреватель");
-    else if (temp > MAX_TEMP) sendAlert("Кондиционер");
+    if (temp < MIN_TEMP) sendAlert("le chauffage");
+    else if (temp > MAX_TEMP) sendAlert("la climatisation");
   }
 }
 
 void sendAlert(const char* device) {
-  Serial.print("[ALERT] Требуется включить ");
+  Serial.print("[ALERTE] Il faut activer ");
   Serial.println(device);
 }
