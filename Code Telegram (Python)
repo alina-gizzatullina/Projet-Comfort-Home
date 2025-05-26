@@ -1,0 +1,137 @@
+# ATTENTION: Ce code est ecrit 
+
+import serial
+import requests
+import time
+import re
+import threading
+
+# === Paramètres ===
+bot_token   = "7704509412:AAEgnS_jmAxsF-L44UUucy2Pt9A-MV56Dd8"
+chat_id     = "810116867"
+port_serie  = "COM3"
+vitesse     = 115200
+INTERVAL_MIN = 60        # Anti-spam : 60 secondes entre deux alertes identiques
+MUTE_DUREE = 3600        # Durée de silence après appui bouton : 1 heure (en secondes)
+
+# === Variables globales ===
+dernier_message = ""
+dernier_envoi = 0
+silence_jusqua = 0
+
+# === Initialisation du port série ===
+print(f"→ Connexion au port {port_serie}…")
+try:
+    ser = serial.Serial(port_serie, vitesse, timeout=1)
+    time.sleep(2)
+    print("✔ Port série ouvert.")
+except Exception as e:
+    print("❌ Erreur de connexion série :", e)
+    exit(1)
+
+# === Envoi d'une alerte formatée à Telegram ===
+def envoyer_telegram(alerte, temp=None, hum=None, lux=None):
+    global silence_jusqua
+    if time.time() < silence_jusqua:
+        print("🔕 Alerte ignorée (mode silencieux activé)")
+        return
+
+    texte = "⚠️ *Alerte domotique*\n"
+    if temp is not None:
+        texte += f"🌡 Température : *{temp:.1f} °C*\n"
+    if hum is not None:
+        texte += f"💧 Humidité : *{hum:.1f} %*\n"
+    if lux is not None:
+        texte += f"🔆 Luminosité : *{lux:.0f} lux*\n"
+    texte += f"\n🚨 _{alerte}_"
+
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    data = {
+        "chat_id": chat_id,
+        "text": texte,
+        "parse_mode": "Markdown",
+        "reply_markup": {
+            "inline_keyboard": [[
+                {"text": "❌ Désactiver les alertes pendant 1h", "callback_data": "desactiver_alertes"}
+            ]]
+        }
+    }
+
+    try:
+        r = requests.post(url, json=data, timeout=5)
+        print("📩 Alerte envoyée à Telegram :", alerte)
+    except Exception as e:
+        print("❌ Erreur lors de l'envoi :", e)
+
+# === Écoute des clics sur les boutons Telegram ===
+def ecouter_callbacks():
+    global silence_jusqua
+    print("▶️ Écoute des boutons Telegram activée...")
+    offset = None
+    while True:
+        try:
+            url = f"https://api.telegram.org/bot{bot_token}/getUpdates"
+            params = {"timeout": 10}
+            if offset:
+                params["offset"] = offset
+            r = requests.get(url, params=params)
+            data = r.json()
+
+            if "result" in data:
+                for update in data["result"]:
+                    offset = update["update_id"] + 1
+
+                    if "callback_query" in update:
+                        query = update["callback_query"]
+                        data_bouton = query["data"]
+
+                        # Répondre au clic utilisateur
+                        requests.post(f"https://api.telegram.org/bot{bot_token}/answerCallbackQuery",
+                                      data={"callback_query_id": query["id"],
+                                            "text": "🔕 Alertes désactivées pendant 1h."})
+
+                        if data_bouton == "desactiver_alertes":
+                            print("🔴 Mode silencieux activé pour 1 heure")
+                            silence_jusqua = time.time() + MUTE_DUREE
+                            try:
+                                requests.post(f"https://api.telegram.org/bot{bot_token}/sendMessage",
+                                              data={"chat_id": chat_id,
+                                                    "text": "🔕 Mode silencieux activé pendant 1 heure."})
+                            except:
+                                pass
+        except Exception as e:
+            print("❌ Erreur dans le thread Telegram :", e)
+            time.sleep(2)
+
+# Lancer l'écoute des boutons dans un thread séparé
+threading.Thread(target=ecouter_callbacks, daemon=True).start()
+
+# === Boucle principale : écoute du port série ===
+print("🔍 En attente des alertes Arduino...")
+while True:
+    try:
+        if ser.in_waiting:
+            ligne = ser.readline().decode(errors='ignore').strip()
+            if ligne.startswith("[ALERTE]"):
+                parties = ligne.replace("[ALERTE]", "").strip().split("|")
+                message = parties[0].strip()
+                temp = hum = lux = None
+
+                for p in parties[1:]:
+                    if "temp=" in p:
+                        temp = float(re.findall(r"[-+]?\d*\.\d+|\d+", p)[0])
+                    elif "hum=" in p:
+                        hum = float(re.findall(r"[-+]?\d*\.\d+|\d+", p)[0])
+                    elif "lux=" in p:
+                        lux = float(re.findall(r"[-+]?\d*\.\d+|\d+", p)[0])
+
+                maintenant = time.time()
+                if message != dernier_message or (maintenant - dernier_envoi > INTERVAL_MIN):
+                    envoyer_telegram(message, temp, hum, lux)
+                    dernier_message = message
+                    dernier_envoi = maintenant
+                else:
+                    print("⏳ Message ignoré (anti-spam actif)")
+    except Exception as e:
+        print("❌ Erreur de lecture série :", e)
+        time.sleep(1)
