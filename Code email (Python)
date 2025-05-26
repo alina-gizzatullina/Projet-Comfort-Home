@@ -1,0 +1,98 @@
+# ============================================================================
+# 🐍 Ce script est écrit en Python, PAS pour Arduino !
+# Il NE DOIT PAS être utilisé dans l'IDE Arduino.
+#
+# 📦 Utilisation :
+# 1. Téléversez d'abord le Code initial (Arduino) sur votre carte (UCA board)
+# 2. Fermez le Moniteur série de l'IDE Arduino
+# 3. Lancez ce script Python dans Thonny (ou tout autre éditeur Python)
+#
+# ✉️ Ce script envoie des alertes par email via SMTP
+# avec un intervalle minimum de 30 minutes entre les messages identiques.
+# ============================================================================
+
+import serial
+import smtplib
+import time
+import re
+from email.message import EmailMessage
+
+# === Paramètres ===
+port_serie    = "COM3"  # Modifie selon le port de ta carte
+baud_rate     = 115200
+INTERVAL_MIN  = 1800  # 30 minutes en secondes
+
+# === Configuration de l'email ===
+email_expediteur = "yekaterina.kirpichova@gmail.com"
+mot_de_passe_app = "dmrb byfa aqxc jlsv"
+email_destinataire = "gizzatullinanice@gmail.com"
+
+# === Variables d'état ===
+dernier_message = ""
+dernier_envoi = 0
+
+# === Connexion série ===
+print(f"→ Connexion au port {port_serie}…")
+try:
+    ser = serial.Serial(port_serie, baud_rate, timeout=1)
+    time.sleep(2)
+    print("✔ Port série ouvert.")
+except Exception as e:
+    print("❌ Erreur port série :", e)
+    exit(1)
+
+# === Fonction d'envoi d'email ===
+def envoyer_email(sujet, corps):
+    msg = EmailMessage()
+    msg["Subject"] = sujet
+    msg["From"] = email_expediteur
+    msg["To"] = email_destinataire
+    msg.set_content(corps)
+
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
+            smtp.login(email_expediteur, mot_de_passe_app)
+            smtp.send_message(msg)
+        print("📨 Email envoyé :", sujet)
+    except Exception as e:
+        print("❌ Erreur d'envoi email :", e)
+
+# === Boucle principale ===
+print("🔍 En attente des alertes Arduino...")
+while True:
+    try:
+        if ser.in_waiting:
+            ligne = ser.readline().decode(errors='ignore').strip()
+            if ligne.startswith("[ALERTE]"):
+                parties = ligne.replace("[ALERTE]", "").strip().split("|")
+                alerte = parties[0].strip()
+                temp = hum = lux = None
+
+                for p in parties[1:]:
+                    if "temp=" in p:
+                        temp = float(re.findall(r"[-+]?\d*\.\d+|\d+", p)[0])
+                    elif "hum=" in p:
+                        hum = float(re.findall(r"[-+]?\d*\.\d+|\d+", p)[0])
+                    elif "lux=" in p:
+                        lux = float(re.findall(r"[-+]?\d*\.\d+|\d+", p)[0])
+
+                maintenant = time.time()
+                if alerte != dernier_message or (maintenant - dernier_envoi > INTERVAL_MIN):
+                    # Corps du mail avec gestion de None
+                    corps = f"Alerte Domotique 🚨\n\n🔸 Message : {alerte}\n"
+                    if temp is not None:
+                        corps += f"🌡 Température : {temp:.1f} °C\n"
+                    if hum is not None:
+                        corps += f"💧 Humidité : {hum:.1f} %\n"
+                    if lux is not None:
+                        corps += f"🔆 Luminosité : {lux:.0f} lux\n"
+                    corps += "\nCette alerte a été envoyée automatiquement."
+
+                    envoyer_email("⚠️ Alerte Domotique", corps)
+                    dernier_message = alerte
+                    dernier_envoi = maintenant
+                else:
+                    print("⏳ Alerte ignorée (anti-spam actif)")
+    except Exception as e:
+        print("❌ Erreur de lecture :", e)
+        time.sleep(1)
