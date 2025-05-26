@@ -3,7 +3,7 @@
 # Il NE DOIT PAS être utilisé dans l'IDE Arduino.
 #
 # 📦 Utilisation :
-# 1. Téléversez d'abord le code Arduino sur votre carte (UCA board)
+# 1. Téléversez d'abord le Code Arduino sur votre carte (UCA board)
 # 2. Fermez le Moniteur série de l'IDE Arduino
 # 3. Lancez ce script Python dans Thonny (ou tout autre éditeur Python)
 #
