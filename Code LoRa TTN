@@ -1,0 +1,146 @@
+#include <Wire.h>
+#include <SPI.h>
+#include <Adafruit_SHTC3.h>
+#include <Adafruit_LTR329_LTR303.h>
+#include <lmic.h>
+#include <hal/hal.h>
+
+// ——— Параметры сенсоров ———
+Adafruit_SHTC3 shtc3;
+Adafruit_LTR303 ltr;
+
+#define PIR_POWER_PIN A2
+#define PIR_SIGNAL_PIN A3
+
+// Пороговые значения
+#define MIN_HUMIDITY   40
+#define MAX_HUMIDITY   70
+#define MIN_TEMP       18
+#define MAX_TEMP       26
+#define LUX_THRESHOLD  50
+
+// ——— ABP-параметры (вставь свои!) ———
+// DevAddr
+static const u4_t DEVADDR = 0x260B2E10;
+// NwkSKey
+static const u1_t NWKSKEY[16] = {
+  0xEB,0x50,0x51,0xDB,0x6A,0xB2,0x04,0x6A,0x7A,0xD7,0x7D,0x29,0x8F,0x55,0x62,0x5C
+};
+// AppSKey
+static const u1_t APPSKEY[16] = {
+  0x00,0x05,0xA0,0xC3,0xEF,0x33,0xD4,0x02,0xFF,0x16,0x4F,0x38,0x6C,0xE7,0x73,0x98
+};
+
+// ——— Фиктивные EUI для ABP (не используются) ———
+void os_getArtEui(u1_t* buf) {}
+void os_getDevEui(u1_t* buf) {}
+void os_getDevKey(u1_t* buf) {}
+
+static osjob_t sendjob;
+
+// ——— Настройка пинов LMIC ———
+const lmic_pinmap lmic_pins = {
+  .nss  = 10,            // CS
+  .rxtx = LMIC_UNUSED_PIN,
+  .rst  = 8,             // RESET
+  .dio  = {6, 6, 6} 
+};
+
+// Эта функция ставит в очередь сообщение message
+void sendLoRaMessage(const char* message) {
+  if (LMIC.opmode & OP_TXRXPEND) {
+    Serial.println(F("LoRa занята, пропускаем"));
+    return;
+  }
+  // Отправляем текст как ASCII
+  LMIC_setTxData2(1, (uint8_t*)message, strlen(message), 0);
+  Serial.print(F("Отправлено: "));
+  Serial.println(message);
+}
+
+void setup() {
+  Serial.begin(9600);
+  delay(2000);
+  Serial.println(F("=== Запуск ABP Sensor → TTN ==="));
+
+  // Инициализация датчиков
+  Wire.begin();
+  if (!shtc3.begin()) {
+    Serial.println(F("Ошибка SHTC3!"));
+    while (1);
+  }
+  if (!ltr.begin()) {
+    Serial.println(F("Ошибка LTR303!"));
+    while (1);
+  }
+  ltr.setGain(LTR3XX_GAIN_2);
+  ltr.setIntegrationTime(LTR3XX_INTEGTIME_100);
+  ltr.setMeasurementRate(LTR3XX_MEASRATE_200);
+
+  pinMode(PIR_POWER_PIN, OUTPUT);
+  digitalWrite(PIR_POWER_PIN, HIGH);
+  pinMode(PIR_SIGNAL_PIN, INPUT);
+
+  // Инициализация LMIC
+  os_init();
+  LMIC_reset();
+
+  // ABP-сессия
+  LMIC_setSession(0x1, DEVADDR, NWKSKEY, APPSKEY);
+
+  // Каналы EU868 — оставляем стандартные 0–2, остальные отключаем
+  for (uint8_t i = 3; i < 9; i++) {
+    LMIC_disableChannel(i);
+  }
+
+  LMIC_setLinkCheckMode(0);
+  LMIC_setDrTxpow(DR_SF7, 14); // SF7, 14dBm
+
+  Serial.println(F("Setup complete"));
+}
+
+void loop() {
+  // Считываем данные SHTC3
+  sensors_event_t humEvent, tempEvent;
+  shtc3.getEvent(&humEvent, &tempEvent);
+  float temp = tempEvent.temperature;
+  float hum  = humEvent.relative_humidity;
+
+  // Считываем LTR303
+  float lux = NAN;
+  if (ltr.newDataAvailable()) {
+    uint16_t vis_ir, ir;
+    if (ltr.readBothChannels(vis_ir, ir)) {
+      lux = float(vis_ir) - float(ir);
+    }
+  }
+
+  // Определяем, какое устройство нужно включить
+  const char* alert = nullptr;
+  if (!isnan(hum)) {
+    if (hum < MIN_HUMIDITY)    alert = "Humidifier ON";
+    else if (hum > MAX_HUMIDITY) alert = "Dehumidifier ON";
+  }
+  if (!isnan(temp)) {
+    if (temp < MIN_TEMP)       alert = "Heater ON";
+    else if (temp > MAX_TEMP)    alert = "AC ON";
+  }
+  if (!isnan(lux) && lux < LUX_THRESHOLD) {
+    // если нет влажно/тэмп, можем перекрыть предупреждением освещения
+    alert = "Lights ON";
+  }
+
+  // PIR не выключает эту логику — только локально
+
+  // Если есть что отправить — отправляем
+  if (alert) {
+    sendLoRaMessage(alert);
+  }
+
+  // Запускаем LMIC-цикл
+  os_runloop_once();
+
+  // Пауза перед следующим циклом
+  delay(20000); // отправляем не чаще, чем раз в 20s
+}
+
