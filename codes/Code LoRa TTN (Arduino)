@@ -1,146 +1,404 @@
-#include <Wire.h>
-#include <SPI.h>
-#include <Adafruit_SHTC3.h>
-#include <Adafruit_LTR329_LTR303.h>
+#define CFG_EU 1
+//#define CFG_VN 1
+//#define CFG_US 1
+
+/*******************************************************************************/
+
 #include <lmic.h>
 #include <hal/hal.h>
+#include <SPI.h>
+#include "LowPower.h"
+//Sensors librairies
+#include <Wire.h>
+#include <LTR303.h>
+#include "kxtj3-1057.h" // http://librarymanager/All#kxtj3-1057
+#include "SHTC3.h"
 
-// ——— Параметры сенсоров ———
-Adafruit_SHTC3 shtc3;
-Adafruit_LTR303 ltr;
+// Create an LTR303 object, here called "light":
 
-#define PIR_POWER_PIN A2
-#define PIR_SIGNAL_PIN A3
+LTR303 lightsensor;
+KXTJ3 myIMU(0x0E); // Address can be 0x0E or 0x0F
+SHTC3 s(Wire);
 
-// Пороговые значения
-#define MIN_HUMIDITY   40
-#define MAX_HUMIDITY   70
-#define MIN_TEMP       18
-#define MAX_TEMP       26
-#define LUX_THRESHOLD  50
+float   sampleRate = 6.25;  // HZ - Samples per second - 0.781, 1.563, 3.125, 6.25, 12.5, 25, 50, 100, 200, 400, 800, 1600Hz
+uint8_t accelRange = 2;     // Accelerometer range = 2, 4, 8, 16g
 
-// ——— ABP-параметры (вставь свои!) ———
-// DevAddr
+// Global variables:
+
+// LoRaWAN end-device address (DevAddr)
+
 static const u4_t DEVADDR = 0x260B2E10;
-// NwkSKey
-static const u1_t NWKSKEY[16] = {
-  0xEB,0x50,0x51,0xDB,0x6A,0xB2,0x04,0x6A,0x7A,0xD7,0x7D,0x29,0x8F,0x55,0x62,0x5C
-};
-// AppSKey
-static const u1_t APPSKEY[16] = {
-  0x00,0x05,0xA0,0xC3,0xEF,0x33,0xD4,0x02,0xFF,0x16,0x4F,0x38,0x6C,0xE7,0x73,0x98
-};
 
-// ——— Фиктивные EUI для ABP (не используются) ———
-void os_getArtEui(u1_t* buf) {}
-void os_getDevEui(u1_t* buf) {}
-void os_getDevKey(u1_t* buf) {}
+// LoRaWAN NwkSKey, network session key
+// This is the default Semtech key, which is used by the early prototype TTN
+// network.
+static const PROGMEM u1_t NWKSKEY[16] = {  0xEB, 0x50, 0x51, 0xDB, 0x6A, 0xB2, 0x04, 0x6A, 0x7A, 0xD7, 0x7D, 0x29, 0x8F, 0x55, 0x62, 0x5C };
+
+
+// LoRaWAN AppSKey, application session key
+// This is the default Semtech key, which is used by the early prototype TTN
+// network.
+static const u1_t PROGMEM APPSKEY[16] = {  0x00, 0x05, 0xA0, 0xC3, 0xEF, 0x33, 0xD4, 0x02, 0xFF, 0x16, 0x4F, 0x38, 0x6C, 0xE7, 0x73, 0x98 };
+
+
+// These callbacks are only used in over-the-air activation, so they are
+// left empty here (we cannot leave them out completely unless
+// DISABLE_JOIN is set in config.h, otherwise the linker will complain).
+void os_getArtEui (u1_t* buf) { }
+void os_getDevEui (u1_t* buf) { }
+void os_getDevKey (u1_t* buf) { }
 
 static osjob_t sendjob;
 
-// ——— Настройка пинов LMIC ———
+
+// Schedule TX every this many seconds (might become longer due to duty
+// cycle limitations).
+const unsigned TX_INTERVAL = 60;
+
+// Pin mapping
 const lmic_pinmap lmic_pins = {
-  .nss  = 10,            // CS
-  .rxtx = LMIC_UNUSED_PIN,
-  .rst  = 8,             // RESET
-  .dio  = {6, 6, 6} 
+    .nss = 10,
+    .rxtx = LMIC_UNUSED_PIN,
+    .rst = 8,
+    .dio = {6, 6, 6},
 };
 
-// Эта функция ставит в очередь сообщение message
-void sendLoRaMessage(const char* message) {
-  if (LMIC.opmode & OP_TXRXPEND) {
-    Serial.println(F("LoRa занята, пропускаем"));
-    return;
-  }
-  // Отправляем текст как ASCII
-  LMIC_setTxData2(1, (uint8_t*)message, strlen(message), 0);
-  Serial.print(F("Отправлено: "));
-  Serial.println(message);
+// ---------------------------------------------------------------------------------
+// Functions
+// ---------------------------------------------------------------------------------
+
+extern volatile unsigned long timer0_overflow_count;
+extern volatile unsigned long timer0_millis;
+void addMillis(unsigned long extra_millis) {
+  uint8_t oldSREG = SREG;
+  cli();
+  timer0_millis += extra_millis;
+  SREG = oldSREG;
+  sei();
 }
 
+void do_sleep(unsigned int sleepyTime) {
+  unsigned int eights = sleepyTime / 8;
+  unsigned int fours = (sleepyTime % 8) / 4;
+  unsigned int twos = ((sleepyTime % 8) % 4) / 2;
+  unsigned int ones = ((sleepyTime % 8) % 4) % 2;
+
+        Serial.print("Sleep during ");
+        Serial.print(sleepyTime);
+        Serial.println("sec");
+        delay(50);
+
+        Serial.end();
+        
+          for ( int x = 0; x < eights; x++) {
+            // put the processor to sleep for 8 seconds
+            LowPower.powerDown(SLEEP_8S, ADC_OFF, BOD_OFF);
+            // LMIC uses micros() to keep track of the duty cycle, so
+              // hack timer0_overflow for a rude adjustment:
+              cli();
+              timer0_overflow_count+= 8 * 64 * clockCyclesPerMicrosecond();
+              sei();
+          }
+          for ( int x = 0; x < fours; x++) {
+            // put the processor to sleep for 4 seconds
+            LowPower.powerDown(SLEEP_4S, ADC_OFF, BOD_OFF);
+            // LMIC uses micros() to keep track of the duty cycle, so
+              // hack timer0_overflow for a rude adjustment:
+              cli();
+              timer0_overflow_count+= 4 * 64 * clockCyclesPerMicrosecond();
+              sei();
+          }
+          for ( int x = 0; x < twos; x++) {
+            // put the processor to sleep for 2 seconds
+            LowPower.powerDown(SLEEP_2S, ADC_OFF, BOD_OFF);
+            // LMIC uses micros() to keep track of the duty cycle, so
+              // hack timer0_overflow for a rude adjustment:
+              cli();
+              timer0_overflow_count+= 2 * 64 * clockCyclesPerMicrosecond();
+              sei();
+          }
+          for ( int x = 0; x < ones; x++) {
+            // put the processor to sleep for 1 seconds
+            LowPower.powerDown(SLEEP_1S, ADC_OFF, BOD_OFF);
+            // LMIC uses micros() to keep track of the duty cycle, so
+              // hack timer0_overflow for a rude adjustment:
+              cli();
+              timer0_overflow_count+=  64 * clockCyclesPerMicrosecond();
+              sei();
+          }
+          addMillis(sleepyTime * 1000);
+
+          Serial.begin(115200);
+}
+
+// ReadVcc function to read MCU Voltage
+long readVcc() {
+      long result;
+      // Read 1.1V reference against AVcc
+      ADMUX = _BV(REFS0) | _BV(MUX3) | _BV(MUX2) | _BV(MUX1);
+      delay(2); // Wait for Vref to settle
+      ADCSRA |= _BV(ADSC); // Convert
+      while (bit_is_set(ADCSRA,ADSC));
+      result = ADCL;
+      result |= ADCH<<8;
+      result = 1126400L / result; // Back-calculate AVcc in mV
+      return result;
+}
+
+// Read Light function for 
+double readLight() { 
+        double result;
+        unsigned int data0, data1;
+        lightsensor.getData(data0,data1);
+    
+    // Perform lux calculation:
+
+    lightsensor.getLux(0,1,data0,data1,result);  
+            return result;
+}
+
+
+
+void onEvent (ev_t ev) {
+    switch(ev) {
+        case EV_SCAN_TIMEOUT:
+            Serial.println(F("EV_SCAN_TIMEOUT"));
+            break;
+        case EV_BEACON_FOUND:
+            Serial.println(F("EV_BEACON_FOUND"));
+            break;
+        case EV_BEACON_MISSED:
+            Serial.println(F("EV_BEACON_MISSED"));
+            break;
+        case EV_BEACON_TRACKED:
+            Serial.println(F("EV_BEACON_TRACKED"));
+            break;
+        case EV_JOINING:
+            Serial.println(F("EV_JOINING"));
+            break;
+        case EV_JOINED:
+            Serial.println(F("EV_JOINED"));
+            break;
+        case EV_RFU1:
+            Serial.println(F("EV_RFU1"));
+            break;
+        case EV_JOIN_FAILED:
+            Serial.println(F("EV_JOIN_FAILED"));
+            break;
+        case EV_REJOIN_FAILED:
+            Serial.println(F("EV_REJOIN_FAILED"));
+            break;
+        case EV_TXCOMPLETE:
+            Serial.println(F("EV_TXCOMPLETE"));
+            if (LMIC.txrxFlags & TXRX_ACK)
+              Serial.println(F("Received ack"));
+            if (LMIC.dataLen) {
+              Serial.print(F("Received "));
+              Serial.print(LMIC.dataLen);
+              Serial.println(F(" bytes of payload"));
+              for (int i = 0; i < LMIC.dataLen; i++) {
+              if (LMIC.frame[LMIC.dataBeg + i] < 0x10) {
+              Serial.print(F("0"));
+              }
+              Serial.print(LMIC.frame[LMIC.dataBeg + i], HEX);
+              }
+              Serial.println("");
+            }
+            // Schedule next transmission
+            
+            os_setTimedCallback(&sendjob,os_getTime()+sec2osticks(1), do_send);
+                     
+            do_sleep(TX_INTERVAL);
+                        
+            break;
+        case EV_LOST_TSYNC:
+            Serial.println(F("EV_LOST_TSYNC"));
+            break;
+        case EV_RESET:
+            Serial.println(F("EV_RESET"));
+            break;
+        case EV_RXCOMPLETE:
+            // data received in ping slot
+            Serial.println(F("EV_RXCOMPLETE"));
+            break;
+        case EV_LINK_DEAD:
+            Serial.println(F("EV_LINK_DEAD"));
+            break;
+        case EV_LINK_ALIVE:
+            Serial.println(F("EV_LINK_ALIVE"));
+            break;
+         default:
+            Serial.println(F("Unknown event"));
+            break;
+    }
+}
+
+// ... (предыдущий код без изменений)
+// Пороговые значения
+#define TEMP_HIGH_THRESHOLD 300   // 30.0°C
+#define TEMP_LOW_THRESHOLD 180    // 18.0°C
+#define HUM_HIGH_THRESHOLD 700    // 70.0%
+#define HUM_LOW_THRESHOLD 400     // 40.0%
+
+void do_send(osjob_t* j) {
+    // Проверяем, нет ли текущей передачи
+    if (LMIC.opmode & OP_TXRXPEND) {
+        Serial.println(F("Transmission pending, skip"));
+        return;
+    }
+    
+    // Инициализация и чтение датчиков
+    s.begin(true);
+    int t = s.readTempC() * 10;   // Температура в десятых градуса
+    int h = s.readHumidity() * 10; // Влажность в десятых процента
+
+    // Отладочный вывод
+    Serial.print("Temp: ");
+    Serial.print(t/10.0, 1);
+    Serial.print("°C, Humidity: ");
+    Serial.print(h/10.0, 1);
+    Serial.println("%");
+
+    // Определяем сообщение для отправки
+    const char* alertMsg = "OK";  // По умолчанию всё в норме
+    
+    // Проверка условий по приоритету
+    if (t >= TEMP_HIGH_THRESHOLD) {
+        alertMsg = "AL CL";  // Включить кондиционер
+    } 
+    else if (t <= TEMP_LOW_THRESHOLD) {
+        alertMsg = "AL CH";  // Включить обогрев
+    } 
+    else if (h >= HUM_HIGH_THRESHOLD) {
+        alertMsg = "AL DE";  // Включить осушитель
+    } 
+    else if (h <= HUM_LOW_THRESHOLD) {
+        alertMsg = "AL HU";  // Включить увлажнитель
+    }
+
+    // Формируем текстовое сообщение
+    uint8_t packet[strlen(alertMsg)];
+    memcpy(packet, alertMsg, strlen(alertMsg));
+    
+    // Отправляем сообщение
+    Serial.print("Sending: ");
+    Serial.println(alertMsg);
+    LMIC_setTxData2(1, packet, sizeof(packet), 0);
+    
+    // Планируем следующую проверку через интервал
+    os_setTimedCallback(&sendjob, os_getTime() + sec2osticks(TX_INTERVAL), do_send);
+    do_sleep(TX_INTERVAL);
+}
+// ... (остальной код без изменений)
+
 void setup() {
-  Serial.begin(9600);
-  delay(2000);
-  Serial.println(F("=== Запуск ABP Sensor → TTN ==="));
 
-  // Инициализация датчиков
-  Wire.begin();
-  if (!shtc3.begin()) {
-    Serial.println(F("Ошибка SHTC3!"));
-    while (1);
+    Serial.begin(115200);
+    Serial.println("Starting");
+    
+    Wire.begin();
+
+    s.begin(true);
+    
+    // Set-up sensors
+    lightsensor.begin();    
+    lightsensor.setPowerUp();
+
+    if( myIMU.begin(sampleRate, accelRange) != 0 )
+  {
+    Serial.print("Failed to initialize IMU.\n");
   }
-  if (!ltr.begin()) {
-    Serial.println(F("Ошибка LTR303!"));
-    while (1);
+  else
+  {
+    Serial.print("IMU initialized.\n");
   }
-  ltr.setGain(LTR3XX_GAIN_2);
-  ltr.setIntegrationTime(LTR3XX_INTEGTIME_100);
-  ltr.setMeasurementRate(LTR3XX_MEASRATE_200);
+  
+  // Detection threshold, movement duration and polarity
+  myIMU.intConf(123, 1, 10, HIGH); 
 
-  pinMode(PIR_POWER_PIN, OUTPUT);
-  digitalWrite(PIR_POWER_PIN, HIGH);
-  pinMode(PIR_SIGNAL_PIN, INPUT);
+    // LMIC init
+    os_init();
+    // Reset the MAC state. Session and pending data transfers will be discarded.
+    LMIC_reset();
 
-  // Инициализация LMIC
-  os_init();
-  LMIC_reset();
 
-  // ABP-сессия
-  LMIC_setSession(0x1, DEVADDR, NWKSKEY, APPSKEY);
+    /* This function is intended to compensate for clock inaccuracy (up to ±10% in this example), 
+    but that also works to compensate for inaccuracies due to software delays. 
+    The downside of this compensation is a longer receive window, which means a higher battery drain. 
+    So if this helps, you might want to try to lower the percentage (i.e. lower the 10 in the above call), 
+    often 1% works well already. */
+    
+    LMIC_setClockError(MAX_CLOCK_ERROR * 2 / 100);
 
-  // Каналы EU868 — оставляем стандартные 0–2, остальные отключаем
-  for (uint8_t i = 3; i < 9; i++) {
-    LMIC_disableChannel(i);
-  }
+    // Set static session parameters. Instead of dynamically establishing a session
+    // by joining the network, precomputed session parameters are be provided.
+    #ifdef PROGMEM
+    // On AVR, these values are stored in flash and only copied to RAM
+    // once. Copy them to a temporary buffer here, LMIC_setSession will
+    // copy them into a buffer of its own again.
+    uint8_t appskey[sizeof(APPSKEY)];
+    uint8_t nwkskey[sizeof(NWKSKEY)];
+    memcpy_P(appskey, APPSKEY, sizeof(APPSKEY));
+    memcpy_P(nwkskey, NWKSKEY, sizeof(NWKSKEY));
+    LMIC_setSession (0x1, DEVADDR, nwkskey, appskey);
+    #else
+    // If not running an AVR with PROGMEM, just use the arrays directly
+    LMIC_setSession (0x1, DEVADDR, NWKSKEY, APPSKEY);
+    #endif
 
-  LMIC_setLinkCheckMode(0);
-  LMIC_setDrTxpow(DR_SF7, 14); // SF7, 14dBm
+    #if defined(CFG_EU)
+    // Set up the 8 channels used    
+    LMIC_setupChannel(0, 868100000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
+    LMIC_setupChannel(1, 868300000, DR_RANGE_MAP(DR_SF12, DR_SF7B), BAND_CENTI);      // g-band
+    LMIC_setupChannel(2, 868500000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
+    //LMIC_setupChannel(3, 867100000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
+    //LMIC_setupChannel(4, 867300000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
+    //LMIC_setupChannel(5, 867500000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
+    //LMIC_setupChannel(6, 867700000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
+    //LMIC_setupChannel(7, 867900000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
+    //LMIC_setupChannel(8, 868800000, DR_RANGE_MAP(DR_FSK,  DR_FSK),  BAND_MILLI);      // g2-band
+    
+    #elif defined(CFG_VN)
+    // Set up the 8 channels used    
+    LMIC_setupChannel(0, 921400000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
+    LMIC_setupChannel(1, 921600000, DR_RANGE_MAP(DR_SF12, DR_SF7B), BAND_CENTI);      // g-band
+    LMIC_setupChannel(2, 921800000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
+    LMIC_setupChannel(3, 922000000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
+    LMIC_setupChannel(4, 922200000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
+    LMIC_setupChannel(5, 922400000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
+    LMIC_setupChannel(6, 922600000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
+    LMIC_setupChannel(7, 922800000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
+    LMIC_setupChannel(8, 922700000, DR_RANGE_MAP(DR_FSK,  DR_FSK),  BAND_MILLI);      // g2-band
 
-  Serial.println(F("Setup complete"));
+    #elif defined(CFG_US)
+    // Set up the 8 channels used    
+  LMIC_setupChannel(0, 903900000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
+  LMIC_setupChannel(1, 904100000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
+  LMIC_setupChannel(2, 904300000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
+  LMIC_setupChannel(3, 904500000, DR_RANGE_MAP(DR_SF12, DR_SF7B),  BAND_CENTI);      // g-band
+  LMIC_setupChannel(4, 904700000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
+  LMIC_setupChannel(5, 904900000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
+  LMIC_setupChannel(6, 905100000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
+  LMIC_setupChannel(7, 905300000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
+  LMIC_setupChannel(8, 904500000, DR_RANGE_MAP(DR_FSK,  DR_FSK),  BAND_MILLI);      // g2-band
+    
+    #endif
+
+    // Disable link check validation
+    LMIC_setLinkCheckMode(0);
+
+    // TTN uses SF9 for its RX2 window.
+    LMIC.dn2Dr = DR_SF9;
+
+    // Set data rate and transmit power for uplink (note: txpow seems to be ignored by the library)
+    LMIC_setDrTxpow(DR_SF7,14);
+
+    // Start job
+    do_send(&sendjob);
 }
 
 void loop() {
-  // Считываем данные SHTC3
-  sensors_event_t humEvent, tempEvent;
-  shtc3.getEvent(&humEvent, &tempEvent);
-  float temp = tempEvent.temperature;
-  float hum  = humEvent.relative_humidity;
-
-  // Считываем LTR303
-  float lux = NAN;
-  if (ltr.newDataAvailable()) {
-    uint16_t vis_ir, ir;
-    if (ltr.readBothChannels(vis_ir, ir)) {
-      lux = float(vis_ir) - float(ir);
-    }
-  }
-
-  // Определяем, какое устройство нужно включить
-  const char* alert = nullptr;
-  if (!isnan(hum)) {
-    if (hum < MIN_HUMIDITY)    alert = "Humidifier ON";
-    else if (hum > MAX_HUMIDITY) alert = "Dehumidifier ON";
-  }
-  if (!isnan(temp)) {
-    if (temp < MIN_TEMP)       alert = "Heater ON";
-    else if (temp > MAX_TEMP)    alert = "AC ON";
-  }
-  if (!isnan(lux) && lux < LUX_THRESHOLD) {
-    // если нет влажно/тэмп, можем перекрыть предупреждением освещения
-    alert = "Lights ON";
-  }
-
-  // PIR не выключает эту логику — только локально
-
-  // Если есть что отправить — отправляем
-  if (alert) {
-    sendLoRaMessage(alert);
-  }
-
-  // Запускаем LMIC-цикл
-  os_runloop_once();
-
-  // Пауза перед следующим циклом
-  delay(20000); // отправляем не чаще, чем раз в 20s
+  
+    os_runloop_once();
 }
 
