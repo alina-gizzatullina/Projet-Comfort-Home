@@ -1,0 +1,52 @@
+function Decoder(bytes, port) {
+  if (bytes.length > 0) {
+    const text = String.fromCharCode.apply(null, bytes);
+    
+    switch(text) {
+      case "AL CL":
+        return { 
+          alert: "high_temperature", 
+          message: "Température élevée! Allumez climatiseur" 
+        };
+        
+      case "AL CH":
+        return { 
+          alert: "low_temperature", 
+          message: "Température basse! Allumez chauffage" 
+        };
+        
+      case "AL DE":
+        return { 
+          alert: "high_humidity", 
+          message: "Humidité élevée! Allumez déshumidificateur" 
+        };
+        
+      case "AL HU":
+        return { 
+          alert: "low_humidity", 
+          message: "Humidité basse! Allumez humidificateur" 
+        };
+        
+      case "OK":
+        return { 
+          status: "normal", 
+          message: "Tous les paramètres sont normaux" 
+         };
+  
+case "OK:37":
+  return { 
+    status: "normal", 
+    battery: 3.7, 
+    message: "Paramètres normaux, batterie 3.7V" 
+  };
+        
+      default:
+        return {
+          alert: "unknown",
+          message: "Message non reconnu",
+          raw: text
+        };
+    }
+  }
+  return { error: "empty_payload" };
+}
