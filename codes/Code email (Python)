@@ -5,7 +5,8 @@
 # 📦 Utilisation :
 # 1. Téléversez d'abord le Code initial (Arduino) sur votre carte (UCA board)
 # 2. Fermez le Moniteur série de l'IDE Arduino
-# 3. Lancez ce script Python dans Thonny (ou tout autre éditeur Python)
+# 3. À la ligne 29, où il est écrit email_destinatoire="", insérez votre email.
+# 4. Lancez ce script Python dans Thonny (ou tout autre éditeur Python)
 #
 # ✉️ Ce script envoie des alertes par email via SMTP
 # avec un intervalle minimum de 30 minutes entre les messages identiques.
@@ -25,7 +26,7 @@ INTERVAL_MIN  = 1800  # 30 minutes en secondes
 # === Configuration de l'email ===
 email_expediteur = "yekaterina.kirpichova@gmail.com"
 mot_de_passe_app = "dmrb byfa aqxc jlsv"
-email_destinataire = "gizzatullinanice@gmail.com"
+email_destinataire = ""
 
 # === Variables d'état ===
 dernier_message = ""
