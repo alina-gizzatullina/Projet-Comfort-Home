@@ -1,4 +1,4 @@
-//ATTENTION! Il faut utiliser un decodeur
+//ATTENTION! Il faut utiliser un decodeur pour TTN
 
 #define CFG_EU 1
 //#define CFG_VN 1
