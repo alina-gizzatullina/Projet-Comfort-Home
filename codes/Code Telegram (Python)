@@ -1,6 +1,7 @@
 # ============================================================================
 # 🐍 Ce script est écrit en Python, PAS pour Arduino !
 # Il NE DOIT PAS être utilisé dans l'IDE Arduino.
+# Un lien vers un bot: @maison0204_bot (envoyez-le à une sorte de chat dans le télégramme et cliquez sur ce message qui devrait se transformer en un lien)
 #
 # 📦 Utilisation :
 # 1. Téléversez d'abord le Code intial (Arduino) sur votre carte (UCA board)
