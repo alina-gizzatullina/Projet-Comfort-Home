@@ -6,7 +6,8 @@
 # 📦 Utilisation :
 # 1. Téléversez d'abord le Code intial (Arduino) sur votre carte (UCA board)
 # 2. Fermez le Moniteur série de l'IDE Arduino
-# 3. Lancez ce script Python dans Thonny (ou tout autre éditeur Python)
+# 3. Changer le port dans la ligne 26 si nécessaire.
+# 4. Lancez ce script Python dans Thonny (ou tout autre éditeur Python)
 #
 # 🧠 Ce script lit les données du port série et envoie des alertes via Telegram.
 # Il utilise le protocole Telegram Bot API et les ports COM de l'ordinateur.
