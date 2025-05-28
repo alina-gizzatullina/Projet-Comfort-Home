@@ -1,3 +1,5 @@
+//ATTENTION! Il faut utiliser un decodeur
+
 #define CFG_EU 1
 //#define CFG_VN 1
 //#define CFG_US 1
@@ -401,4 +403,7 @@ void loop() {
   
     os_runloop_once();
 }
+
+
+
 
