@@ -8,6 +8,7 @@
 # 3. Changez le port dans la ligne 23 en fonction du port auquel votre appareil est connecté
 # 4. À la ligne 29, où il est écrit email_destinatoire="", insérez votre email.
 # 5. Lancez ce script Python dans Thonny (ou tout autre éditeur Python)
+# 6. Si vous n'avez pas reçu l'e-mail, veuillez vérifier votre dossier spam.
 #
 # ✉️ Ce script envoie des alertes par email via SMTP
 # avec un intervalle minimum de 30 minutes entre les messages identiques.
