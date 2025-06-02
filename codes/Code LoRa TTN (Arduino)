@@ -235,7 +235,7 @@ void onEvent (ev_t ev) {
     }
 }
 
-// ... (предыдущий код без изменений)
+
 // Пороговые значения
 #define TEMP_HIGH_THRESHOLD 300   // 30.0°C
 #define TEMP_LOW_THRESHOLD 180    // 18.0°C
@@ -291,7 +291,7 @@ void do_send(osjob_t* j) {
     os_setTimedCallback(&sendjob, os_getTime() + sec2osticks(TX_INTERVAL), do_send);
     do_sleep(TX_INTERVAL);
 }
-// ... (остальной код без изменений)
+
 
 void setup() {
 
