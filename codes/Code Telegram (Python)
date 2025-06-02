@@ -1,13 +1,14 @@
 # ============================================================================
 # 🐍 Ce script est écrit en Python, PAS pour Arduino !
 # Il NE DOIT PAS être utilisé dans l'IDE Arduino.
-# Un lien vers un bot: @maison0204_bot (envoyez-le à une sorte de chat dans le télégramme et cliquez sur ce message qui devrait se transformer en un lien)
+# Un lien vers un bot: @maison0204_bot (envoyez-le à une sorte de chat dans le télégramme et cliquez sur ce message qui devrait se transformer en un lien).
 #
 # 📦 Utilisation :
 # 1. Téléversez d'abord le Code intial (Arduino) sur votre carte (UCA board)
 # 2. Fermez le Moniteur série de l'IDE Arduino
-# 3. Changez le port dans la ligne 26 en fonction du port auquel votre appareil est connecté
-# 4. Lancez ce script Python dans Thonny (ou tout autre éditeur Python)
+# 3. Changez le port dans la ligne 27 en fonction du port auquel votre appareil est connecté
+# 4. Changez le chat_id sur la ligne 26, vous pouvez le trouver ici @get_id_bot (envoyez-le à une sorte de chat dans le télégramme et cliquez sur ce message qui devrait se transformer en un lien)
+# 5. Lancez ce script Python dans Thonny (ou tout autre éditeur Python)
 #
 # 🧠 Ce script lit les données du port série et envoie des alertes via Telegram.
 # Il utilise le protocole Telegram Bot API et les ports COM de l'ordinateur.
