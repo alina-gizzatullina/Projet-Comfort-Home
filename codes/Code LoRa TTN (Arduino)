@@ -1,4 +1,5 @@
 //ATTENTION! Il faut utiliser un decodeur pour TTN
+//Remplacez les valeurs de AppSKey, NwkSKey et DEVADDR par les valeurs de votre end device.
 
 #define CFG_EU 1
 //#define CFG_VN 1
